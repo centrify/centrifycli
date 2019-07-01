@@ -7,3 +7,4 @@
 [Oo]bj/
 *.nupkg
 .vs/*
+.vscode/*
