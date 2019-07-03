@@ -5,6 +5,7 @@
 [Rr]elease/
 [Bb]in/
 [Oo]bj/
+[Pp]ublish/
 *.nupkg
 .vs/*
 .vscode/*
