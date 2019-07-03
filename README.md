@@ -6,4 +6,4 @@ Centrify CLI (ccli) provides a command line interface to the Centrify REST API. 
 * JSON Schemas for of Centrify API Endpoints
 * Handling of Authentication via OAuth or user/password
 
-See the wiki [[Centrify CLI: Centrify Command Line Interface]] for full details.
+See the wiki [Centrify CLI: Centrify Command Line Interface](https://github.com/centrify/centrifycli/wiki/Centrify-CLI:-Centrify-Command-Line-Interface) for full details.
