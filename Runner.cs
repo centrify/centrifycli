@@ -35,7 +35,7 @@ namespace CentrifyCLI
         public static readonly TimeSpan SWAGGER_REFRESH = TimeSpan.FromDays(15);
 
         /// <summary>Result codes for REST calls</summary>
-        public enum ResultCode { Success, Redirected, MfaRequired, Unauthorized, NotFound, Exception, Failed, Timeout};
+        public enum ResultCode { Success, Redirected, Unauthorized, NotFound, Exception, Failed, Timeout};
 
         /// <summary>Centrify service URL.</summary>
         private string m_url ="";
@@ -101,7 +101,39 @@ namespace CentrifyCLI
             return result;
         }
 
-        /// <summary>Authenticate the user via username/password/etc.  This does not handle MFA; user authenication msut require password only.<para/>
+        // Roughly: http://stackoverflow.com/questions/3404421/password-masking-console-application
+        public static string ReadMaskedPassword(bool prompt)
+        {
+            ConsoleKeyInfo key;
+            string password = null;
+
+            if (prompt) Console.Write("Password: ");
+
+            do
+            {
+                // Read a character without echoing it
+                key = Console.ReadKey(true);
+
+                if (key.Key != ConsoleKey.Backspace && key.Key != ConsoleKey.Enter)
+                {
+                    password += key.KeyChar;
+                    Console.Write("*");
+                }
+                else
+                {
+                    if (key.Key == ConsoleKey.Backspace && password != null && password.Length > 0)
+                    {
+                        password = password.Substring(0, password.Length - 1);
+                        Console.Write("\b \b");
+                    }
+                }
+            } while (key.Key != ConsoleKey.Enter);
+
+            Console.WriteLine();
+            return password;
+        }
+
+        /// <summary>Authenticate the user via username/password/etc.<para/>
         /// OAuth token is the preferred method of authenication; this exists for ease of use</summary>
         /// <param name="config">Contains config info, including profile to use</param>
         /// <param name="timeout">Timeout is milliserconds for REST calls</param>
@@ -112,26 +144,34 @@ namespace CentrifyCLI
 
             try
             {
-                if (string.IsNullOrWhiteSpace(profile.UserName) || string.IsNullOrWhiteSpace(profile.Password))
+                if (string.IsNullOrWhiteSpace(profile.UserName))
                 {
-                    return new Tuple<ResultCode, string>(ResultCode.NotFound, $"No user or password in config to authenicate.");
+                    return new Tuple<ResultCode, string>(ResultCode.NotFound, $"No user in config to authenticate.");
                 }
+
                 InitializeClient(profile.URL);
 
                 // Do StartAuthentication
                 string endpoint = "/Security/StartAuthentication";
-                string jsonTemplate = "{\"User\": \"" + profile.UserName + "\",\"Version\": \"1.0\"}";
-                var authTask = PlaceCall(endpoint, jsonTemplate);
+                Dictionary<string, string> args = new Dictionary<string, string>()
+                {
+                    { "User", profile.UserName },
+                    { "Version", "1.0" }
+                };
+
+                var authTask = PlaceCall(endpoint, JsonConvert.SerializeObject(args));
                 if (!authTask.Wait(timeout))
                 {
                     return new Tuple<ResultCode, string>(ResultCode.Timeout, $"Request timed out ({endpoint}).");
                 }
+
                 Tuple<Runner.ResultCode, string> callResult = authTask.Result;
                 if (callResult.Item1 != ResultCode.Success)
                 {
                     return new Tuple<ResultCode, string>(ResultCode.Failed, MakeFailResult(callResult.Item2, $"Authentication request failed ({endpoint}): {callResult.Item1}"));
                 }
 
+                // Remember session and tenant
                 JObject resultSet = ParseContentsToJObject(callResult.Item2);
                 if (!TryGetJObjectValue(resultSet, "Result", out JObject results))
                 {
@@ -140,7 +180,7 @@ namespace CentrifyCLI
 
                 if (TryGetJObjectValue(results, "Redirect", out string redirect))
                 {
-                    Ccli.ConditionalWrite($"Authenication is redirected, use the prefered URL: {redirect}", config.Silent);
+                    Ccli.ConditionalWrite($"Authentication is redirected, use the prefered URL: {redirect}", config.Silent);
                     return new Tuple<ResultCode, string>(ResultCode.Redirected, redirect);
                 }
 
@@ -149,62 +189,55 @@ namespace CentrifyCLI
                     throw new ArgumentException($"Authentication results are missing 'SessionId' ({endpoint}): {ResultToString(results)}", "SessionId");
                 }
 
+                if (!TryGetJObjectValue(results, "TenantId", out string tenantId))
+                {
+                    throw new ArgumentException($"Authentication results are missing 'TenantId' ({endpoint}): {ResultToString(results)}", "TenantId");
+                }
+
                 if (!TryGetJObjectValue(results, "Challenges", out JToken challenges))
                 {
                     throw new ArgumentException($"Authentication results are missing 'Challenges' ({endpoint}): {ResultToString(results)}", "Challenges");
                 }
-                if (challenges.Children().Count() > 1)
-                {
-                    return new Tuple<ResultCode, string>(ResultCode.MfaRequired, $"Authentication for user {profile.UserName} requires MFA.");
-                }
 
-                string mechanismId = null;
-                try
-                {
-                    // Cheating here; mechanismId is so far down the results; just grabbing it directly and catching exceptions for failure
-                    mechanismId = (string)challenges[0]["Mechanisms"][0]["MechanismId"];
-                }
-                catch (Exception e)
-                {
-                    Ccli.ConditionalWrite($"Unable to extract mechanism id from result challenges ({endpoint}): {e.Message}", config.Silent);
-                    throw new ArgumentException($"Unable to extract mechanism id from results ({endpoint}): {ResultToString(resultSet)}", "MechanismId");
-                }
 
-                // Do AdvanceAuthentication
-                endpoint = "/Security/AdvanceAuthentication";
-                jsonTemplate = "{\"SessionId\": \"" + sessionId
-                        + "\",\n\"MechanismId\": \"" + mechanismId
-                        + "\",\n\"Action\":\"Answer\",\n \"Answer\": \""
-                        + profile.Password + "\"}";
-                authTask = PlaceCall(endpoint, jsonTemplate);
-                if (!authTask.Wait(timeout))
+                // Need to satisfy at least 1 challenge in each collection:
+                for (int x = 0; x < challenges.Children().Count(); x++)
                 {
-                    return new Tuple<ResultCode, string>(ResultCode.Timeout, $"Request timed out ({endpoint}).");
-                }
-                callResult = authTask.Result;
-                if (callResult.Item1 != ResultCode.Success)
-                {
-                    return new Tuple<ResultCode, string>(ResultCode.Failed, MakeFailResult(callResult.Item2, $"Authentication request failed ({endpoint}): {callResult.Item1}"));
-                }
+                    // Present the option(s) to the user                    
+                    for (int mechIdx = 0; mechIdx < challenges[x]["Mechanisms"].Children().Count(); mechIdx++)
+                    {
+                        Console.WriteLine("Option {0}: {1}", mechIdx, MechToDescription(challenges[x]["Mechanisms"][mechIdx]));
+                    }
 
-                resultSet = ParseContentsToJObject(callResult.Item2);
-                results = null;
-                if (!TryGetJObjectValue(resultSet, "Result", out results))
-                {
-                    throw new ArgumentException($"Authentication results have no 'result' property ({endpoint}):\n{ResultToString(resultSet)}", "Result");
-                }
+                    int optionSelect = -1;
 
-                if (!TryGetJObjectValue(results, "Summary", out string summary))
-                {
-                    throw new ArgumentException($"Authentication results have no 'Summary' property ({endpoint}):\n{ResultToString(results)}", "Summary");
-                }
-                if (summary == "StartNextChallenge")
-                {
-                    return new Tuple<ResultCode, string>(ResultCode.MfaRequired, "Authentication requires MFA; not supported.");
-                }
-                else if (summary != "LoginSuccess")
-                {
-                    return new Tuple<ResultCode, string>(ResultCode.Failed, $"Authentication Failed ({endpoint}):\n{ResultToString(results)}");
+                    if (challenges[x]["Mechanisms"].Children().Count() == 1)
+                    {
+                        optionSelect = 0;
+                    }
+                    else
+                    {
+                        while (optionSelect < 0 || optionSelect > challenges[x]["Mechanisms"].Children().Count())
+                        {
+                            Console.Write("Select option and press enter: ");
+                            string optEntered = Console.ReadLine();
+                            int.TryParse(optEntered, out optionSelect);
+                        }
+                    }
+
+                    try
+                    {
+                        var newChallenges = AdvanceForMech(timeout, tenantId, sessionId, challenges[x]["Mechanisms"][optionSelect]);
+                        if(newChallenges != null)
+                        {
+                            challenges = newChallenges;
+                            x = -1;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        return new Tuple<ResultCode, string>(ResultCode.Failed, ex.Message);
+                    }
                 }
             }
             catch (Exception e)
@@ -214,6 +247,160 @@ namespace CentrifyCLI
 
             m_url = profile.URL;
             return new Tuple<ResultCode, string>(ResultCode.Success, "");
+        }
+
+        private dynamic AdvanceForMech(int timeout, string tenantId, string sessionId, dynamic mech)
+        {
+            Dictionary<string, dynamic> advanceArgs = new Dictionary<string, dynamic>();
+            advanceArgs["TenantId"] = tenantId;
+            advanceArgs["SessionId"] = sessionId;
+            advanceArgs["MechanismId"] = mech["MechanismId"];
+            advanceArgs["PersistentLogin"] = false;
+
+            // Write prompt
+            Console.Write(MechToPrompt(mech));
+
+            // Read or poll for response.  For StartTextOob we simplify and require user to enter the response, rather
+            //  than simultaenously prompting and polling, though this can be done as well.
+            string answerType = mech["AnswerType"];
+            switch (answerType)
+            {
+                case "Text":
+                case "StartTextOob":
+                    {
+                        if (answerType == "StartTextOob")
+                        {
+                            // First we start oob, to get the mech activated
+                            advanceArgs["Action"] = "StartOOB";
+                            if(!PlaceCall("/security/advanceauthentication", JsonConvert.SerializeObject(advanceArgs)).Wait(timeout))
+                            {
+                                throw new ApplicationException("Request timed out (/security/advanceauthentication)");                                
+                            }
+                        }
+
+                        // Now prompt for the value to submit and do so
+                        string promptResponse = ReadMaskedPassword(false);
+                        advanceArgs["Answer"] = promptResponse;
+                        advanceArgs["Action"] = "Answer";
+                        var result = SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
+                        
+                        if(result["Result"]["Summary"] == "NewPackage")
+                        {
+                            return result["Result"]["Challenges"];                            
+                        }
+
+                        if (!(result["Result"]["Summary"] == "StartNextChallenge" ||
+                              result["Result"]["Summary"] == "LoginSuccess"))
+                        {
+                            throw new ApplicationException(result["Message"]);
+                        }
+                    }
+                    break;
+                case "StartOob":
+                    // Pure out of band mech, simply poll until complete or fail                    
+                    advanceArgs["Action"] = "StartOOB";
+                    SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
+
+                    // Poll
+                    advanceArgs["Action"] = "Poll";
+                    dynamic pollResult = null;
+                    do
+                    {
+                        Console.Write(".");
+                        pollResult = SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
+                        System.Threading.Thread.Sleep(1000);
+                    } while (pollResult["Result"]["Summary"] == "OobPending");
+
+                    // We are done polling, did it work ?
+                    if (pollResult["Result"]["Summary"] == "NewPackage")
+                    {
+                        return pollResult["Result"]["Challenges"];
+                    }
+                    
+                    if (!(pollResult["Result"]["Summary"] == "StartNextChallenge" ||
+                          pollResult["Result"]["Summary"] == "LoginSuccess"))
+                    {
+                        throw new ApplicationException(pollResult["Message"]);
+                    }
+                    break;
+            }
+
+            return null;
+        }
+
+        public const string OneTimePassCode = "OTP";
+        public const string OathPassCode = "OATH";
+        public const string PhoneFactor = "PF";
+        public const string Sms = "SMS";
+        public const string Email = "EMAIL";
+        public const string PasswordReset = "RESET";
+        public const string SecurityQuestion = "SQ";
+
+        private static string MechToDescription(dynamic mech)
+        {
+            string mechName = mech["Name"];
+
+            try
+            {
+                return mech["PromptSelectMech"];
+            }
+            catch { /* Doesn't support this property */ }
+
+            switch (mechName)
+            {
+                case "UP":
+                    return "Password";
+                case "SMS":
+                    return string.Format("SMS to number ending in {0}", mech["PartialDeviceAddress"]);
+                case "EMAIL":
+                    return string.Format("Email to address ending with {0}", mech["PartialAddress"]);
+                case "PF":
+                    return string.Format("Phone call to number ending with {0}", mech["PartialPhoneNumber"]);
+                case "OATH":
+                    return string.Format("OATH compatible client");
+                case "SQ":
+                    return string.Format("Security Question");
+                default:
+                    return mechName;
+            }
+        }
+
+        private static string MechToPrompt(dynamic mech)
+        {
+            string mechName = mech["Name"];
+            try
+            {
+                string servicePrompt = mech["PromptMechChosen"];
+                if(!string.IsNullOrEmpty(servicePrompt))
+                {
+                    if (!servicePrompt.EndsWith(":"))
+                    {
+                        return servicePrompt + ": ";
+                    }
+                    else
+                    {
+                        return servicePrompt + " ";
+                    }
+                }
+            }
+            catch { /* Doesn't support this property */ }
+            switch (mechName)
+            {
+                case "UP":
+                    return "Password: ";
+                case "SMS":
+                    return string.Format("Enter the code sent via SMS to number ending in {0}: ", mech["PartialDeviceAddress"]);
+                case "EMAIL":
+                    return string.Format("Please click or open the link sent to the email to address ending with {0}.", mech["PartialAddress"]);
+                case "PF":
+                    return string.Format("Calling number ending with {0}, please follow the spoken prompt.", mech["PartialPhoneNumber"]);
+                case "OATH":
+                    return string.Format("Enter your current OATH code: ");
+                case "SQ":
+                    return string.Format("Enter the response to your secret question: ");
+                default:
+                    return mechName;
+            }
         }
 
         /// <summary>Call the rest endpoint with the JSON.<para/>
@@ -251,6 +438,26 @@ namespace CentrifyCLI
                 default:
                     return new Tuple<ResultCode, string>(ResultCode.Failed, $"Unexpected response status from {endpoint}: {statusCode} - {contents}");
             }
+        }
+
+        // Wraps PlaceCall to simplify calling pattern:
+        //  Throws exception on API fail or timeout (see ex.Message)
+        //  Returns Result object as simple Dictionary
+        public dynamic SimpleCall(int timeout, string endpoint, object args)
+        {
+            var call = PlaceCall(endpoint, JsonConvert.SerializeObject(args));
+            if (!call.Wait(timeout))
+            {
+                throw new ApplicationException($"Request timed out ({endpoint})");
+            }
+
+            var callResult = call.Result;
+            if (callResult.Item1 != ResultCode.Success)
+            {
+                throw new ApplicationException(MakeFailResult(callResult.Item2, $"API call failed ({endpoint}): {callResult.Item1}"));                
+            }
+
+            return ParseContentsToJObject(callResult.Item2);
         }
 
         /// <summary>Returns the path to a user file.</summary>
