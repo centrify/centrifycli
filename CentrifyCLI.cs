@@ -57,6 +57,7 @@ Examples:
     {
         [Argument(0, "Command", "One of the following: {\n" +
             "|\t Path (starting with '/') from API Description at https://developer.centrify.com/reference, e.g. /UserMgmt/GetUserInfo\n" +
+            "|\t bootstrap    - Bootstrap and configure the service for CLI usage.\n" +
             "|\t listConfig   - List saved configuration.\n" +
             "|\t saveConfig   - Save command-line options to configuration.\n" +
             "|\t listProfiles - List saved server profiles.\n" +
@@ -119,6 +120,14 @@ Examples:
         ///<summary>Internal, for forcing to a specific swagger file version.</summary>
         [Option("-apilist|--apilist", Description = "Swagger Directory and Filename", ShowInHelpText = false)]
         public string SwaggerDirectory { get; }
+
+        [Option("-br|--bootstraproles", "The roles to give access to the CLI, i.e. -br MyRole.  You may have several of these.  If not specified, default is sysadmin.", CommandOptionType.MultipleValue)]
+        public string[] BootstrapRoles { get; }
+
+        [Option("-breg|--bootstrapregexes", "The API regex to use for the CLI scope, i.e. -breg '.*'.  You may have several of these. If not specified, default is .*", CommandOptionType.MultipleValue)]
+        public string[] BootstrapRegexes { get; }
+
+
 
         // Constants
         private const string FILENAME_BASE = "centrifycli";
@@ -331,11 +340,16 @@ Examples:
             ConditionalWrite($"Saved token to {tokenFile}.");
         }
 
-        /// <summary>Save config to file</summary>
         private bool SaveConfig()
         {
+            return SaveConfig(false);
+        }
+
+        /// <summary>Save config to file</summary>
+        private bool SaveConfig(bool force)
+        {
             string dir = Runner.GetUserFilePath(CONFIG_DEFAULT);
-            if ((File.Exists(dir)) && (!Overwrite))
+            if ((File.Exists(dir)) && (!Overwrite) && (!force))
             {
                 WriteErrorText("Must specify -o or --overwrite to overwrite config at " + dir);
                 return false;
@@ -367,6 +381,134 @@ Examples:
 
             ConditionalWrite("Config saved to " + dir);
             return true;
+        }
+
+        private bool BootstrapService()
+        {
+            List<string> roles = new List<string>();
+            if(BootstrapRoles != null)
+            {
+                roles.AddRange(BootstrapRoles);
+            }
+            else
+            {
+                roles.Add("sysadmin");
+            }
+
+            List<string> regexes = new List<string>();
+            if(BootstrapRegexes != null)
+            {
+                regexes.AddRange(BootstrapRegexes);
+            }
+            else
+            {
+                regexes.Add(".*");
+            }
+
+            // Need to do some minimal prep to call to backend
+            int timeout = GetTimeout();
+            ConditionalWrite($"Authenticating with user {m_config.Profile.UserName}");
+            Tuple<Runner.ResultCode, string> authResult = m_runner.Authenticate(m_config, timeout);
+            if (authResult.Item1 != Runner.ResultCode.Success)
+            {
+                WriteErrorText($"Failure during bootstrap - could not authenticate user.");
+                return false;
+            }
+
+            try
+            {
+                string appId = null;
+
+                // Look for the app to see if its already there, if so, jsut update roles/regexes?
+                Dictionary<string, string> searchArgs = new Dictionary<string, string>()
+                {
+                    { "Script", "select ID from Application where ServiceName = 'CentrifyCLI'" }
+                };
+
+                var searchResult = m_runner.SimpleCall(timeout, "/redrock/query", searchArgs);
+                if(searchResult["Result"]["Results"].Count > 0)
+                {
+                    appId = searchResult["Result"]["Results"][0]["Row"]["ID"];
+                }
+
+                if (appId == null)
+                {
+                    // Create the app (if needed):
+                    //  /saasmanage/importappfromtemplate { ID: "OAuth2ServerClient" }
+                    //  Result: _RowKey => App ID
+                    Dictionary<string, string[]> importAppArgs = new Dictionary<string, string[]>()
+                    {
+                        { "ID", new string[] { "OAuth2ServerClient" } }
+                    };
+
+                    var addResult = m_runner.SimpleCall(timeout, "/saasmanage/importappfromtemplate", importAppArgs);
+                    appId = addResult["Result"][0]["_RowKey"];
+                }
+
+                // Resolve roles to IDs
+                //  Role -> ID
+                Dictionary<string, string> roleToIds = new Dictionary<string, string>();
+                foreach(string role in roles)
+                {
+                    var roleToId = m_runner.SimpleCall(timeout, $"/saasmanage/getroleidfromname?roleName={role}", null);
+                    string roleId = roleToId["Result"];
+                    roleToIds.Add(role, roleId);
+                }
+                                
+                // Set permission for the roles on the app
+                //  /saasmanage/setapplicationpermissions { ID == RowKey == PVID: "AppId", Grants: { Principal: "System Administrator",  PrincipalId: "sysadmin", PType: "Role", Rights: "View,Execute"  } }
+                Dictionary<string, object> appPermsArgs = new Dictionary<string, object>()
+                {
+                    { "ID", appId },
+                    { "RowKey", appId },
+                    { "PVID", appId },
+                    { "Grants", new List<dynamic>() }
+                };
+
+                var grants = (List<dynamic>)appPermsArgs["Grants"];
+                foreach(var item in roleToIds)
+                {
+                    grants.Add(new { Principal = item.Key, PrincipalId = item.Value, PType = "Role", Rights = "View,Execute" });
+                }
+                
+                
+                // Add each role id to appPermsArgs
+                m_runner.SimpleCall(timeout, "/saasmanage/setapplicationpermissions", appPermsArgs);
+
+                // Save out the app with all proper bits
+                //  /saasmanage/updateapplicationde {}         
+                Dictionary<string, object> updateAppArgs = new Dictionary<string, object>()
+                {
+                    { "_RowKey", appId },
+                    {  "TokenType", "JwtRS256" },
+                    { "Name", "CentrifyCLI" },
+                    { "ServiceName", "CentrifyCLI" },
+                    { "Description", "CentrifyCLI OAuth2 Application" },
+                    {
+                        "OAuthProfile", new Dictionary<string, object>()
+                        {
+                            { "ClientIDType", "confidential" },
+                            { "MustBeOauthClient", false },
+                            { "TokenLifetimeString", "24:00:00" },
+                            { "AllowedAuth", "ClientCreds,ResourceCreds"},
+                            { "TargetIsUs", true },
+                            { "KnownScopes", new List<dynamic>() }                            
+                        }
+                    }
+                };
+                
+                var scopes = (List<dynamic>)((Dictionary<string, object>)updateAppArgs["OAuthProfile"])["KnownScopes"];
+                scopes.Add(new { Scope = "ccli", Mode = "RestFilter", AllowedRest = regexes.ToArray() });
+
+                var updateResult = m_runner.SimpleCall(timeout, "/saasmanage/updateapplicationde", updateAppArgs);
+
+                return true;
+            }
+            catch(Exception ex)
+            {
+                WriteErrorText($"Failure during bootstrap: {ex.Message}");
+                return false;
+            }            
         }
 
         /// <summary>Save specific profile to file</summary>
@@ -473,6 +615,26 @@ Examples:
                             break;
                         case "listprofiles":
                             Console.WriteLine(string.Join("\n", m_runner.ServerList.Select(x => x.Value)));
+                            break;
+                        case "bootstrap":
+                            if(!BootstrapService())
+                            {                            
+                                return VERB_FAIL;
+                            }
+                            else
+                            {                                                                
+                                ConditionalWrite($"Bootstrap complete, requesting initial user token as well.");
+                                if (!RequestToken())
+                                {
+                                    return VERB_FAIL;
+                                }
+
+                                ConditionalWrite($"Bootstrap complete, initial user token retrieved, saving config.");
+                                if(!SaveConfig(true))
+                                {
+                                    return VERB_FAIL;
+                                }
+                            }
                             break;
                         case "saveconfig":
                             if (!SaveConfig())
