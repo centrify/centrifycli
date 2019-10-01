@@ -9,3 +9,4 @@
 *.nupkg
 .vs/*
 .vscode/*
+Properties/launchSettings.json
