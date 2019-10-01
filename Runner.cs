@@ -198,8 +198,7 @@ namespace CentrifyCLI
                 {
                     throw new ArgumentException($"Authentication results are missing 'Challenges' ({endpoint}): {ResultToString(results)}", "Challenges");
                 }
-
-
+                
                 // Need to satisfy at least 1 challenge in each collection:
                 for (int x = 0; x < challenges.Children().Count(); x++)
                 {
@@ -850,6 +849,13 @@ namespace CentrifyCLI
         {
             ServerProfile profile = config.Profile;
             string TokenEndpoint =  "/oauth2/token/" + profile.OAuthAppId;
+
+            if(profile.Password == null && !config.Silent)
+            {
+                Console.Write($"Enter password for {profile.UserName}: ");
+                profile.Password = ReadMaskedPassword(false);
+            }
+
             string queryParams = $"grant_type=client_credentials&response_type=code&state={RandomString(15)}&scope=ccli&client_id={profile.UserName}&client_secret={profile.Password}";
 
             try
