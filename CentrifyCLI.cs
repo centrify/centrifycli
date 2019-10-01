@@ -489,7 +489,7 @@ Examples:
                         {
                             { "ClientIDType", "confidential" },
                             { "MustBeOauthClient", false },
-                            { "TokenLifetimeString", "24:00:00" },
+                            { "TokenLifetimeString", "1:00:00" },
                             { "AllowedAuth", "ClientCreds,ResourceCreds"},
                             { "TargetIsUs", true },
                             { "KnownScopes", new List<dynamic>() }                            
