@@ -199,35 +199,58 @@ namespace CentrifyCLI
                     throw new ArgumentException($"Authentication results are missing 'Challenges' ({endpoint}): {ResultToString(results)}", "Challenges");
                 }
 
+                // If pw was supplied, and is one of the first mechs, use what was supplied automagically
+                int passwordMechIdx = -1;
+                if (profile.Password != null)
+                {                    
+                    // Present the option(s) to the user                    
+                    for (int mechIdx = 0; mechIdx < challenges[0]["Mechanisms"].Children().Count() && passwordMechIdx == -1; mechIdx++)
+                    {
+                        if (challenges[0]["Mechanisms"][mechIdx]["Name"].Value<string>() == "UP")
+                        {
+                            passwordMechIdx = mechIdx;
+                        }                        
+                    }                    
+                }
+                
 
                 // Need to satisfy at least 1 challenge in each collection:
                 for (int x = 0; x < challenges.Children().Count(); x++)
                 {
-                    // Present the option(s) to the user                    
-                    for (int mechIdx = 0; mechIdx < challenges[x]["Mechanisms"].Children().Count(); mechIdx++)
-                    {
-                        Console.WriteLine("Option {0}: {1}", mechIdx, MechToDescription(challenges[x]["Mechanisms"][mechIdx]));
-                    }
-
                     int optionSelect = -1;
 
-                    if (challenges[x]["Mechanisms"].Children().Count() == 1)
+                    // If passwordMechIdx is set, we should auto-fill password first, do it
+                    if (passwordMechIdx == -1)
                     {
-                        optionSelect = 0;
+                        // Present the option(s) to the user                    
+                        for (int mechIdx = 0; mechIdx < challenges[x]["Mechanisms"].Children().Count(); mechIdx++)
+                        {
+                            Console.WriteLine("Option {0}: {1}", mechIdx, MechToDescription(challenges[x]["Mechanisms"][mechIdx]));
+                        }                     
+
+                        if (challenges[x]["Mechanisms"].Children().Count() == 1)
+                        {
+                            optionSelect = 0;
+                        }
+                        else
+                        {
+                            while (optionSelect < 0 || optionSelect > challenges[x]["Mechanisms"].Children().Count())
+                            {
+                                Console.Write("Select option and press enter: ");
+                                string optEntered = Console.ReadLine();
+                                int.TryParse(optEntered, out optionSelect);
+                            }
+                        }
                     }
                     else
                     {
-                        while (optionSelect < 0 || optionSelect > challenges[x]["Mechanisms"].Children().Count())
-                        {
-                            Console.Write("Select option and press enter: ");
-                            string optEntered = Console.ReadLine();
-                            int.TryParse(optEntered, out optionSelect);
-                        }
+                        optionSelect = passwordMechIdx;
+                        passwordMechIdx = -1;
                     }
 
                     try
                     {
-                        var newChallenges = AdvanceForMech(timeout, tenantId, sessionId, challenges[x]["Mechanisms"][optionSelect]);
+                        var newChallenges = AdvanceForMech(timeout, tenantId, sessionId, challenges[x]["Mechanisms"][optionSelect], profile);
                         if(newChallenges != null)
                         {
                             challenges = newChallenges;
@@ -249,7 +272,7 @@ namespace CentrifyCLI
             return new Tuple<ResultCode, string>(ResultCode.Success, "");
         }
 
-        private dynamic AdvanceForMech(int timeout, string tenantId, string sessionId, dynamic mech)
+        private dynamic AdvanceForMech(int timeout, string tenantId, string sessionId, dynamic mech, ServerProfile profile)
         {
             Dictionary<string, dynamic> advanceArgs = new Dictionary<string, dynamic>();
             advanceArgs["TenantId"] = tenantId;
@@ -257,8 +280,13 @@ namespace CentrifyCLI
             advanceArgs["MechanismId"] = mech["MechanismId"];
             advanceArgs["PersistentLogin"] = false;
 
-            // Write prompt
-            Console.Write(MechToPrompt(mech));
+            bool autoFillPassword = (mech["Name"] == "UP" && profile.Password != null);
+
+            // Write prompt (unless auto-filling)
+            if (!autoFillPassword)
+            {
+                Console.Write(MechToPrompt(mech));
+            }                           
 
             // Read or poll for response.  For StartTextOob we simplify and require user to enter the response, rather
             //  than simultaenously prompting and polling, though this can be done as well.
@@ -279,7 +307,16 @@ namespace CentrifyCLI
                         }
 
                         // Now prompt for the value to submit and do so
-                        string promptResponse = ReadMaskedPassword(false);
+                        string promptResponse = null;
+                        if (autoFillPassword)
+                        {
+                            promptResponse = profile.Password;
+                        }
+                        else
+                        {
+                            promptResponse = ReadMaskedPassword(false); 
+                        }
+
                         advanceArgs["Answer"] = promptResponse;
                         advanceArgs["Action"] = "Answer";
                         var result = SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
