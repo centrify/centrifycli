@@ -681,7 +681,7 @@ Examples:
                         case "savetoken":
                         {
                             // Parsed as part of command line processing
-                            if (m_config.Profile.OAuthToken.Length < 5)   // It should be over 600
+                            if (m_config.Profile.OAuthToken == null || m_config.Profile.OAuthToken.Length < 5)   // It should be over 600
                             {
                                 WriteErrorText("No token available or token too short.");
                                 File.Delete(GetTokenFileName(m_config.Profile.NickName));
