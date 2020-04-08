@@ -45,9 +45,9 @@ namespace CentrifyCLI
 
     [Command(ThrowOnUnexpectedArgument = false, AllowArgumentSeparator = true, ExtendedHelpText = @"
 Examples:
-  ccli /UserMgmt/GetUserInfo -token ""oauthtoken"" -url https://mycompany.my.centrify.com -ja id=myuser@mycompany.com
-  ccli /UserMgmt/GetUserInfo -u myadmin@mycompany.com -pw adminpw -url https://mycompany.my.centrify.com -ja id=myuser@mycompany.com
-  ccli -u myadmin@mycompany.com -url https://mycompany.my.centrify.com saveconfig
+  ccli /UserMgmt/GetUserInfo -token ""oauthtoken"" -url https://mycompany.my.centrify.net -ja id=myuser@mycompany.com
+  ccli /UserMgmt/GetUserInfo -u myadmin@mycompany.com -pw adminpw -url https://mycompany.my.centrify.net -ja id=myuser@mycompany.com
+  ccli -u myadmin@mycompany.com -url https://mycompany.my.centrify.net saveconfig
   ccli /UserMgmt/GetUserInfo -j ""{ ""id"": ""myuser@mycompany.com"" }""
   ccli /UserMgmt/GetUserInfo -ja id=myuser@mycompany.com
   ccli /UserMgmt/GetUserInfo -f payload.json
