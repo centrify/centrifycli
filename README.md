@@ -9,3 +9,11 @@ Centrify CLI (ccli), built with .net Core 2.2, provides a command line interface
 When using Centrify CLI, we strongly encourage you to adopt or follow best industry practices with regard to information security to prevent any data security breaches, including storage of personal data, and always follow all applicable laws.
 
 For more information, see [Centrify CLI: Centrify Command Line Interface](https://github.com/centrify/centrifycli/wiki/Centrify-CLI:-Centrify-Command-Line-Interface).
+
+
+## Building
+
+ccli builds from either the dotnet command line:
+* dotnet build
+
+or from Visual Studio 2019.  Previous versions may not be able to resolve all dotnet version references.
