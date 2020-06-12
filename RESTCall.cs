@@ -51,6 +51,10 @@ namespace CentrifyCLI
             };
             request.Headers.Add("X-CENTRIFY-NATIVE-CLIENT", "true");
             request.Headers.Add("X-CFY-SRC", "ccli");
+            if (AuthValue.Length > 2)
+            {
+                request.Headers.Add("Authorization", "Bearer " + AuthValue);
+            }
             StringContent content = new StringContent(urlFormData, Encoding.UTF8, "application/x-www-form-urlencoded");
             request.Content = content;
             return await m_client.SendAsync(request);

@@ -17,7 +17,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 using McMaster.Extensions.CommandLineUtils;
 
 //  Uses:
@@ -127,6 +130,11 @@ Examples:
         [Option("-breg|--bootstrapregexes", "The API regex to use for the CLI scope, i.e. -breg '.*'.  You may have several of these. If not specified, default is .*", CommandOptionType.MultipleValue)]
         public string[] BootstrapRegexes { get; }
 
+        [Option("-m|--machine", "Use machine identity", CommandOptionType.NoValue)]
+        public bool MachineIdentity { get; }
+
+        [Option("-ms|--machinescope", "Scope to request with machine identity, default is ''", CommandOptionType.SingleValue)]
+        public string MachineScope { get; }
 
 
         // Constants
@@ -729,7 +737,7 @@ Examples:
         }
 
         /// <summary>Run REST command</summary>
-        private bool RunCommand(string call)
+        private bool RunCommand(string call)        
         {
             bool ret = false;
             string result = null;
@@ -744,8 +752,19 @@ Examples:
                 {
                     if (String.IsNullOrEmpty(m_config.Profile.UserName))
                     {
-                        ConditionalWrite($"No token or user to authenicate; skipping authenication.");
-                        m_runner.InitializeClient(m_config.Profile.URL);
+                        if (MachineIdentity)
+                        {
+                            // Get the token
+                            string token = GetTokenFromMachine(timeout, MachineScope ?? "");
+
+                            // Init the runner
+                            m_runner.InitializeClient(m_config.Profile.URL, token);
+                        }
+                        else
+                        {
+                            ConditionalWrite($"No token or user to authenticate; skipping authentication and calling anonymously.");
+                            m_runner.InitializeClient(m_config.Profile.URL);
+                        }
                     }
                     else
                     {
@@ -801,6 +820,97 @@ Examples:
 
             Console.WriteLine(result);
             return ret;
+        }
+
+        private string GetTokenFromMachine(int timeout, string scope)
+        {
+            string pipeName = null;
+            if(RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                pipeName = "/var/centrify/cloud/daemon2";
+            }
+            else if(RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                pipeName = "cagent_admins";
+            }
+            else
+            {
+                throw new ApplicationException("Using machine credentials is not supported on this platform");
+            }
+            
+            using (LRPC2Client client = new LRPC2Client(pipeName))
+            {
+                client.Connect(timeout);
+                var ret = client.SendCommandAndGetReply(1500, scope);
+                var result = ret.FirstOrDefault();
+                if(result != null)
+                {
+                    return (string)result;                    
+                }                
+            }
+
+            throw new ApplicationException("Unable to retrieve token, is machine enrolled and agent running?");
+        }
+
+        private void WriteStringToPipe(string value, NamedPipeClientStream pipe)
+        {          
+            if(value == null)
+            {
+                WriteUint8ToPipe(14, pipe);   // 14 == NIL
+                return;
+            }
+
+            WriteUint8ToPipe(4, pipe);  // 4 == string
+            var enc = new UTF8Encoding(false, false);
+            var encoded = enc.GetBytes(value);
+            pipe.Write(encoded, 0, encoded.Length);
+            WriteUint8ToPipe(0, pipe);  // 0 == string term
+        }
+
+        private string ReadStringFromPipe(NamedPipeClientStream pipe)
+        {
+            byte type = (byte)pipe.ReadByte();
+            if (type == 14) return null;    // 14 == NIL
+
+            byte nextRead = 0;
+            string result = "";
+            do
+            {
+                nextRead = (byte) pipe.ReadByte();
+                if(nextRead != 0)
+                {
+                    result += (char)nextRead;
+                }
+            } while (nextRead != 0);
+
+            return result;
+        }
+
+        private bool ReadBoolFromPipe(NamedPipeClientStream pipe)
+        {
+            byte type = (byte) pipe.ReadByte();
+            if (type != 1)
+                throw new ApplicationException("Bool expected, didnt get bool");
+            return pipe.ReadByte() != 0;
+        }
+
+        private void WriteUint8ToPipe(byte value, NamedPipeClientStream pipe)
+        {
+            pipe.Write(new byte[] { value }, 0, 1);
+        }
+
+        private void WriteUint32ToPipe(UInt32 value, NamedPipeClientStream pipe)
+        {
+            // Write type (3 == Uint32)
+            WriteUint8ToPipe(0x03, pipe);
+
+            // Little endian
+            byte[] xmit = new byte[4];
+            xmit[0] = (byte)value;
+            xmit[1] = (byte)(((uint)value >> 8) & 0xFF);
+            xmit[2] = (byte)(((uint)value >> 16) & 0xFF);
+            xmit[3] = (byte)(((uint)value >> 24) & 0xFF);
+            pipe.Write(xmit, 0, 4);            
         }
     }
 }
