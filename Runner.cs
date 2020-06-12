@@ -264,7 +264,15 @@ namespace CentrifyCLI
             }
             catch (Exception e)
             {
-                return new Tuple<ResultCode, string>(ResultCode.Exception, e.Message);
+                Exception i = e;
+                string allMessages = "";
+                // De-dup; sometimes they double up.
+                while (i != null)
+                {
+                    if (!allMessages.Contains(i.Message)) allMessages += i.Message + "  " + Environment.NewLine;
+                    i = i.InnerException;
+                }
+                return new Tuple<ResultCode, string>(ResultCode.Exception, allMessages);
             }
 
             m_url = profile.URL;
