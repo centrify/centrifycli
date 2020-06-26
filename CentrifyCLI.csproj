@@ -10,14 +10,14 @@
     <Authors>Centrify</Authors>
     <Product>Centrify CLI</Product>
     <AssemblyName>ccli</AssemblyName>
-    <AssemblyVersion>1.0.4.0</AssemblyVersion>
-    <FileVersion>1.0.4.0</FileVersion>
+    <AssemblyVersion>1.0.5.0</AssemblyVersion>
+    <FileVersion>1.0.5.0</FileVersion>
     <Description>Centrify CLI provides a command line interface to the Centrify REST API.  Significant features include:
   - List of common API Endpoints
   - JSON Schemas for those API Endpoints
   - Handling of Authentication via commandline, file or both  
 </Description>
-    <Version>1.0.4</Version>
+    <Version>1.0.5</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
