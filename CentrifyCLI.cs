@@ -313,6 +313,12 @@ Examples:
                     m_config.Profile.URL = URL;
                 }
 
+                // Machine Scope 
+                if (!String.IsNullOrEmpty(MachineScope))
+                {
+                    m_config.Profile.MachineScope = MachineScope;
+                }
+
                 m_config.SwaggerDirectory = !String.IsNullOrEmpty(SwaggerDirectory) ? SwaggerDirectory : Runner.GetUserFilePath(SWAGGER_FILE);
                 m_config.Timeout = Timeout ?? 60;
                 m_config.Silent = silent;
@@ -754,8 +760,8 @@ Examples:
                     {
                         if (MachineIdentity)
                         {
-                            // Get the token
-                            string token = GetTokenFromMachine(timeout, MachineScope ?? "");
+                            // Get the token. Get MachineScope if it is saved in the config and not defined on the command line
+                            string token = GetTokenFromMachine(timeout, MachineScope ?? m_config.Profile.MachineScope ?? "");
 
                             // Init the runner
                             m_runner.InitializeClient(m_config.Profile.URL, token);

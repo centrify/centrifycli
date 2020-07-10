@@ -65,10 +65,13 @@ namespace CentrifyCLI
             [JsonIgnore]
             public string OAuthToken;
 
+            /// <summary>Machine Scope to use when using DMC</summary>
+            public string MachineScope;
+
             public override string ToString()
             {
                 string name = (String.IsNullOrEmpty(NickName) ? "-default-" : NickName);
-                return $"Profile {name}: URL: '{URL}' AppId: '{OAuthAppId}' User: '{UserName}'";
+                return $"Profile {name}: URL: '{URL}' AppId: '{OAuthAppId}' User: '{UserName}' MachineScope: '{MachineScope}'";
             }
         }
 
