@@ -120,6 +120,10 @@ Examples:
         [Option("-s|--silent", "Only display REST/error output (no progress text), default false. -silent, -silent=t, or -silent=true to enable", CommandOptionType.SingleOrNoValue)]
         public (bool HasValue, bool? Value) Silent { get; }
 
+        [Option("-x|--extract", Description = "Only display the specified fully-qualified JSON variable from the REST output.  No progress or error text.  e.g. -x ")]
+        public string Extract { get; }
+
+
         ///<summary>Internal, for forcing to a specific swagger file version.</summary>
         [Option("-apilist|--apilist", Description = "Swagger Directory and Filename", ShowInHelpText = false)]
         public string SwaggerDirectory { get; }
@@ -228,6 +232,9 @@ Examples:
                     silent = (!Silent.Value.HasValue || Silent.Value.Value);
                 }
 
+                if (!String.IsNullOrEmpty(Extract)) // Extracting a variable is also silence, except for that variable.
+                    silent = true;
+
                 // Load saved config (command line args will override values)
                 string dir = Runner.GetUserFilePath(CONFIG_DEFAULT);
                 if (!File.Exists(dir))
@@ -238,7 +245,7 @@ Examples:
                 {
                     string importJson = System.IO.File.ReadAllText(dir);
                     m_config = Newtonsoft.Json.JsonConvert.DeserializeObject<CentrifyCliConfig>(importJson);
-                    if (!Silent.HasValue)
+                    if ((!Silent.HasValue) && (!silent)) // If silent is already true, it was set by Extract
                     {
                         silent = m_config.Silent;
                     }
@@ -440,7 +447,7 @@ Examples:
                 };
 
                 var searchResult = m_runner.SimpleCall(timeout, "/redrock/query", searchArgs);
-                if(searchResult["Result"]["Results"].Count > 0)
+                if(searchResult["Result"]["Results"].Count > 0) //-V3080
                 {
                     appId = searchResult["Result"]["Results"][0]["Row"]["ID"];
                 }
@@ -456,7 +463,7 @@ Examples:
                     };
 
                     var addResult = m_runner.SimpleCall(timeout, "/saasmanage/importappfromtemplate", importAppArgs);
-                    appId = addResult["Result"][0]["_RowKey"];
+                    appId = addResult["Result"][0]["_RowKey"]; //-V3080
                 }
 
                 // Resolve roles to IDs
@@ -465,7 +472,7 @@ Examples:
                 foreach(string role in roles)
                 {
                     var roleToId = m_runner.SimpleCall(timeout, $"/saasmanage/getroleidfromname?roleName={role}", null);
-                    string roleId = roleToId["Result"];
+                    string roleId = roleToId["Result"]; //-V3080
                     roleToIds.Add(role, roleId);
                 }
                                 
@@ -644,7 +651,7 @@ Examples:
                                 }
 
                                 ConditionalWrite($"Bootstrap complete, initial user token retrieved, saving config.");
-                                if(!SaveConfig(true))
+                                if(!SaveConfig(true)) //-V3022
                                 {
                                     return VERB_FAIL;
                                 }
@@ -805,7 +812,7 @@ Examples:
                         }
                         else
                         {   //  Success
-                            Tuple<bool, string> results = m_runner.ParseResults(callResult.Item2);
+                            Tuple<bool, string> results = m_runner.ParseResults(callResult.Item2, Extract);
                             result = results.Item2;
                             ret = results.Item1;
                         }

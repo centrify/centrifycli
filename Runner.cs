@@ -331,7 +331,7 @@ namespace CentrifyCLI
                         advanceArgs["Action"] = "Answer";
                         var result = SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
                         
-                        if(result["Result"]["Summary"] == "NewPackage")
+                        if(result["Result"]["Summary"] == "NewPackage")//-V3080
                         {
                             return result["Result"]["Challenges"];                            
                         }
@@ -356,7 +356,7 @@ namespace CentrifyCLI
                         Console.Write(".");
                         pollResult = SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
                         System.Threading.Thread.Sleep(1000);
-                    } while (pollResult["Result"]["Summary"] == "OobPending");
+                    } while (pollResult["Result"]["Summary"] == "OobPending");//-V3080
 
                     // We are done polling, did it work ?
                     if (pollResult["Result"]["Summary"] == "NewPackage")
@@ -818,6 +818,29 @@ namespace CentrifyCLI
             return JsonConvert.SerializeObject(result, Formatting.Indented);
         }
 
+        /// <summary>Finds nodes matching the string. </summary>
+        static List<string> FindNodes(JToken node, string target)
+        {
+            List<string> returns = new List<string>();
+            if (node.Type == JTokenType.Object)
+            {
+                foreach (JProperty child in node.Children<JProperty>())
+                {
+                    if (child.Name == target)
+                        returns.Add(child.Value.ToString());
+                    returns.AddRange(FindNodes(child.Value, target));
+                }
+            }
+            else if (node.Type == JTokenType.Array)
+            {
+                foreach (JToken child in node.Children())
+                {
+                    returns.AddRange(FindNodes(child, target));
+                }
+            }
+            return returns;
+        }
+
         /// <summary>Fetch value of key from JObject, if key exists</summary>
         /// <param name="obj">JObject</param>
         /// <param name="key">Key name</param>
@@ -839,8 +862,9 @@ namespace CentrifyCLI
 
         /// <summary>Parses the output and returns success or failure and the string to write to the console.</summary>
         /// <param name="restResults"></param>
+        /// <param name="extract">Variable to extract.  If not specified, print the whole thing.</param>
         /// <returns></returns>
-        public Tuple<bool, string> ParseResults(string restResults)
+        public Tuple<bool, string> ParseResults(string restResults, string extract)
         {
             JObject resultSet;
             try
@@ -850,7 +874,15 @@ namespace CentrifyCLI
                 {
                     throw new ArgumentException($"Results are missing 'success': {ResultToString(resultSet)}", "success");
                 }
-                return new Tuple<bool, string>(success, ResultToString(resultSet));
+                if (String.IsNullOrEmpty(extract))
+                    return new Tuple<bool, string>(success, ResultToString(resultSet));
+                // else Just return the one value
+                List<string> returns = FindNodes(resultSet, extract);//-V3080
+                if (returns.Count == 0)
+                    return new Tuple<bool, string>(success, "");
+                
+                return new Tuple<bool, string>(success, string.Join("\n", returns));
+
             }
             catch (Exception e)
             {
