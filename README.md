@@ -17,3 +17,10 @@ ccli builds from either the dotnet command line:
 * dotnet build
 
 or from Visual Studio 2019.  Previous versions may not be able to resolve all dotnet version references.
+
+## Install
+
+* Install .NET Runtime as mentioned [here](https://docs.microsoft.com/en-us/dotnet/core/install/).
+
+* You can install the application from the Releases section.
+
