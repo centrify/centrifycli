@@ -840,7 +840,7 @@ Examples:
             string pipeName = null;
             if(RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                pipeName = "/var/centrify/cloud/daemon2";
+                pipeName = "/var/centrify/cloud/daemon3";
             }
             else if(RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
@@ -862,6 +862,22 @@ Examples:
                 }                
             }
 
+            //fallback for old endpoint
+            if(RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                pipeName = "/var/centrify/cloud/daemon2";
+            
+                using (LRPC2Client client = new LRPC2Client(pipeName))
+                {
+                    client.Connect(timeout);
+                    var ret = client.SendCommandAndGetReply(1500, scope);
+                    var result = ret.FirstOrDefault();
+                    if(result != null)
+                    {
+                        return (string)result;                    
+                    }                
+                }
+            }
             throw new ApplicationException("Unable to retrieve token, is machine enrolled and agent running?");
         }
 
