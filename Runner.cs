@@ -252,7 +252,7 @@ namespace CentrifyCLI
 
                     try
                     {
-                        var newChallenges = AdvanceForMech(timeout, tenantId, sessionId, challenges[x]["Mechanisms"][optionSelect], profile);
+                        var newChallenges = AdvanceForMech(timeout, tenantId, sessionId, challenges[x]["Mechanisms"][optionSelect], config);
                         if(newChallenges != null)
                         {
                             challenges = newChallenges;
@@ -282,8 +282,9 @@ namespace CentrifyCLI
             return new Tuple<ResultCode, string>(ResultCode.Success, "");
         }
 
-        private dynamic AdvanceForMech(int timeout, string tenantId, string sessionId, dynamic mech, ServerProfile profile)
+        private dynamic AdvanceForMech(int timeout, string tenantId, string sessionId, dynamic mech, CentrifyCliConfig config)
         {
+            ServerProfile profile = config.Profile;
             Dictionary<string, dynamic> advanceArgs = new Dictionary<string, dynamic>();
             advanceArgs["TenantId"] = tenantId;
             advanceArgs["SessionId"] = sessionId;
@@ -296,10 +297,11 @@ namespace CentrifyCLI
             if (!autoFillPassword)
             {
                 Console.Write(MechToPrompt(mech));
-            }                           
+            }
 
             // Read or poll for response.  For StartTextOob we simplify and require user to enter the response, rather
             //  than simultaenously prompting and polling, though this can be done as well.
+            dynamic result = null;
             string answerType = mech["AnswerType"];
             switch (answerType)
             {
@@ -329,7 +331,7 @@ namespace CentrifyCLI
 
                         advanceArgs["Answer"] = promptResponse;
                         advanceArgs["Action"] = "Answer";
-                        var result = SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
+                        result = SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
                         
                         if(result["Result"]["Summary"] == "NewPackage")//-V3080
                         {
@@ -350,26 +352,36 @@ namespace CentrifyCLI
 
                     // Poll
                     advanceArgs["Action"] = "Poll";
-                    dynamic pollResult = null;
                     do
                     {
                         Console.Write(".");
-                        pollResult = SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
+                        result = SimpleCall(timeout, "/security/advanceauthentication", advanceArgs);
                         System.Threading.Thread.Sleep(1000);
-                    } while (pollResult["Result"]["Summary"] == "OobPending");//-V3080
+                    } while (result["Result"]["Summary"] == "OobPending");//-V3080
 
                     // We are done polling, did it work ?
-                    if (pollResult["Result"]["Summary"] == "NewPackage")
+                    if (result["Result"]["Summary"] == "NewPackage")
                     {
-                        return pollResult["Result"]["Challenges"];
+                        return result["Result"]["Challenges"];
                     }
                     
-                    if (!(pollResult["Result"]["Summary"] == "StartNextChallenge" ||
-                          pollResult["Result"]["Summary"] == "LoginSuccess"))
+                    if (!(result["Result"]["Summary"] == "StartNextChallenge" ||
+                          result["Result"]["Summary"] == "LoginSuccess"))
                     {
-                        throw new ApplicationException(pollResult["Message"]);
+                        throw new ApplicationException(result["Message"]);
                     }
                     break;
+            }
+
+            // On success need to save the access token if present for future API calls
+            if ((result != null) && (result["Result"]["Summary"] == "LoginSuccess") && (result["Result"]["OAuthTokens"] != null))
+            {
+                string token = result["Result"]["OAuthTokens"]["access_token"];
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    m_restUpdater.AuthValue = token;
+                    Ccli.ConditionalWrite($"Authentication success, acquired access token from response.", config.Silent);
+                }
             }
 
             return null;
