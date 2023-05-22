@@ -1,4 +1,11 @@
 # centrifycli
+
+# PUBLIC ARCHIVE
+
+> ***NOTE***
+> This repo is archived.
+> This repository has been moved to the DelineaXPM GitHub. Please see [DelineaXPM](https://github.com/DelineaXPM/CentrifyCLI) for the updated project.
+
 Centrify REST API Command Line Tool
 
 Centrify CLI (ccli), built with .net Core 2.2, provides a command line interface to the Centrify REST API. Features include:
